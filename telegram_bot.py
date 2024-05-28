@@ -165,8 +165,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     address = message["address"]
     username = message["username"]
 
+    # Attribution for OpenStreetMap(http://www.openstreetmap.org/copyright)
+    osmAttribution = "[Map data © OpenStreetMap contributors](http://www.openstreetmap.org/copyright)"
+
     # Get the original message text shared by the user
-    original_text = f"Der Nutzer @{username} meldet eine Hausdurchsuchung an folgender Adresse:\n{address}"
+    original_text = f"Der Nutzer @{username} meldet eine Hausdurchsuchung an folgender Adresse:\n{address}\n{osmAttribution}"
     votes = message['valid'] + message['invalid']
     percent_valid = round(100 * message['valid'] / votes, 2)
     # Edit the original message to show updated vote counts along with the original text
