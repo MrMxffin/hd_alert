@@ -4,10 +4,13 @@ from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import requests
+import time
+from datetime import datetime, timedelta
 
 # Global dictionary to store vote counts for each location message
 DATA_FILE = ".data/tracked_messages.json"
 tracked_messages = {}
+
 
 def load_tracked_messages():
     global tracked_messages
@@ -15,9 +18,19 @@ def load_tracked_messages():
         with open(DATA_FILE, 'r') as file:
             tracked_messages = json.load(file)
 
+
 def save_tracked_messages():
     with open(DATA_FILE, 'w') as file:
         json.dump(tracked_messages, file, indent=4)
+
+
+def clean_old_messages():
+    current_time = datetime.now()
+    messages_to_delete = [key for key, value in tracked_messages.items() if
+                          datetime.fromisoformat(value["delete_time"]) < current_time]
+    for key in messages_to_delete:
+        del tracked_messages[key]
+    save_tracked_messages()
 
 
 # Load tracked messages at the start
@@ -95,7 +108,15 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         username = update.effective_user.username
         # Initialize vote counts for the new message
         address = get_location_name(location)
-        tracked_messages[f"{update.effective_user.id}_{update.message.message_id}"] = {"valid": 0, "invalid": 0, "address":address, "username":username, "user_votes":[]}
+        delete_time = (datetime.now() + timedelta(weeks=1)).isoformat()
+        tracked_messages[f"{update.effective_user.id}_{update.message.message_id}"] = {
+            "valid": 0,
+            "invalid": 0,
+            "address": address,
+            "username": username,
+            "user_votes": [],
+            "delete_time": delete_time
+        }
         # Save the updated tracked messages
         save_tracked_messages()
         # Use your existing logic to send the location to the channels
@@ -110,8 +131,10 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"Der Nutzer @{username} meldet eine Hausdurchsuchung an folgender Adresse:\n"
                 f"{address}\n",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Valid", callback_data=f"valid_{update.effective_user.id}_{update.message.message_id}"),
-                     InlineKeyboardButton("Invalid", callback_data=f"invalid_{update.effective_user.id}_{update.message.message_id}")]
+                    [InlineKeyboardButton("Valid",
+                                          callback_data=f"valid_{update.effective_user.id}_{update.message.message_id}"),
+                     InlineKeyboardButton("Invalid",
+                                          callback_data=f"invalid_{update.effective_user.id}_{update.message.message_id}")]
                 ])
             )
 
