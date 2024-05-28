@@ -6,7 +6,22 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import requests
 
 # Global dictionary to store vote counts for each location message
+DATA_FILE = ".data/tracked_messages.json"
 tracked_messages = {}
+
+def load_tracked_messages():
+    global tracked_messages
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r') as file:
+            tracked_messages = json.load(file)
+
+def save_tracked_messages():
+    with open(DATA_FILE, 'w') as file:
+        json.dump(tracked_messages, file, indent=4)
+
+
+# Load tracked messages at the start
+load_tracked_messages()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -81,6 +96,8 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Initialize vote counts for the new message
         address = get_location_name(location)
         tracked_messages[f"{update.effective_user.id}_{update.message.message_id}"] = {"valid": 0, "invalid": 0, "address":address, "username":username, "user_votes":[]}
+        # Save the updated tracked messages
+        save_tracked_messages()
         # Use your existing logic to send the location to the channels
         channels = get_channels(os.getenv("PATH_TO_CHANNELS"))
         for channel in channels:
@@ -143,6 +160,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         else:
             message["invalid"] += 1
 
+    # Save the updated tracked messages
+    save_tracked_messages()
     address = message["address"]
     username = message["username"]
 
