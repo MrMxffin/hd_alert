@@ -1,6 +1,5 @@
 .venv
 .env
-channels.json
 *.log
 __pycache__/
 .idea/
