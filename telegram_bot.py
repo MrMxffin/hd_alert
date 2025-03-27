@@ -285,8 +285,17 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if action == "approve":
             add_chat_to_subscribers(chat_id, message_thread_id)
             await query.edit_message_text("Subscription approved ✅")
+            await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id, text="Das Abonnement wurde bestätigt.\nDer Bot wird nun anfangen, Hausdurchsuchungen, die ihm privat gesendet wurden, hier zu posten.")
         else:
             await query.edit_message_text("Subscription rejected ❌")
+            type = update.effective_chat.type
+            text = "Das Abonnement wurde abgelehnt."
+            if type == "private":
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id,
+                                               text=text)
+            else:
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id, text= text + "\nDer Bot wird diesen Chat nun verlassen.")
+                await context.bot.leave_chat(chat_id)
     elif action in ["valid", "invalid"]:
         latitude = float(id_parts[1])
         longitude = float(id_parts[2])
