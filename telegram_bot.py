@@ -285,7 +285,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if action == "approve":
             add_chat_to_subscribers(chat_id, message_thread_id)
             await query.edit_message_text("Subscription approved ✅")
-            await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id, text="Das Abonnement wurde bestätigt.\nDer Bot wird nun anfangen, Hausdurchsuchungen, die ihm privat gesendet wurden, hier zu posten.")
+            await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id,
+                                           text="Das Abonnement wurde bestätigt.\nDer Bot wird nun anfangen, Hausdurchsuchungen, die ihm privat gesendet wurden, hier zu posten.")
         else:
             await query.edit_message_text("Subscription rejected ❌")
             type = update.effective_chat.type
@@ -294,7 +295,8 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id,
                                                text=text)
             else:
-                await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id, text= text + "\nDer Bot wird diesen Chat nun verlassen.")
+                await context.bot.send_message(chat_id=chat_id, message_thread_id=message_thread_id,
+                                               text=text + "\nDer Bot wird diesen Chat nun verlassen.")
                 await context.bot.leave_chat(chat_id)
     elif action in ["valid", "invalid"]:
         latitude = float(id_parts[1])
@@ -354,10 +356,16 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
 
+# TODO: Unsubscribe, btw should the bot have protection from being subscribed or unsubscribed by non-admin
+async def unsubscribe(chat):
+    print("unsubscribe")
+    pass
+
+
 async def track_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     if chat.type != Chat.CHANNEL:
-        return
+        return #TODO: Logic when bot is removed from groups.
     result = extract_status_change(update.my_chat_member)
     if result is None:
         return
@@ -366,7 +374,7 @@ async def track_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not was_admin and is_admin:
         await subscribe(update, context)
     elif was_admin and not is_admin:
-        print("unsubscribe")
+        await unsubscribe(chat)
 
 
 def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[tuple[bool, bool]]:
@@ -396,6 +404,7 @@ def run_bot():
         # Register the handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("subscribe", subscribe))
+        #TODO: Unsubscribe command
         app.add_handler(ChatMemberHandler(track_channels, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.LOCATION, handle_location))
         app.add_handler(CallbackQueryHandler(button_click))
