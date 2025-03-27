@@ -17,7 +17,7 @@ tracked_messages = {"messages": []}
 def initialize_file(path, default_data):
     """Ensure the file exists and contains the default data if not."""
     if not os.path.exists(path):
-        with open(path, 'w') as file:
+        with open(path, 'w+') as file:
             json.dump(default_data, file, indent=2)
 
 
@@ -33,7 +33,7 @@ def load_tracked_messages():
 
 
 def save_tracked_messages():
-    with open(data_path, 'w') as file:
+    with open(data_path, 'w+') as file:
         json.dump(tracked_messages, file, indent=2)
 
 
@@ -154,8 +154,10 @@ def get_location_name(location):
 
 # Define a function to handle the location message
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Check if a location was shared
-    if update.effective_message.location:
+    if not update.effective_message.location:
+        print("Error: Received a message without location data.")
+        return
+    else:
         location = update.effective_message.location
         username = update.effective_user.username
         # Initialize vote counts for the new message
@@ -216,11 +218,57 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.effective_message.reply_text("Vielen Dank für deine Hilfe.", reply_markup=ReplyKeyboardRemove())
 
 
+def add_chat_to_subscribers(chat_id, message_thread_id=None):
+    """Add a chat (group, supergroup, or channel) to the subscribers list."""
+    channels_path = os.getenv("PATH_TO_CHANNELS")
+    initialize_file(channels_path, {"channels": []})  # Ensure file exists
+
+    try:
+        with open(channels_path, 'r') as file:
+            data = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        print(f"Error loading channels from {channels_path}, resetting.")
+        data = {"channels": []}
+
+    # Check if chat is already in the list
+    for entry in data["channels"]:
+        if entry["chat_id"] == chat_id:
+            if message_thread_id and "message_thread_id" not in entry:
+                # If a thread ID is provided but missing, update the entry
+                entry["message_thread_id"] = message_thread_id
+                break
+            return  # Already subscribed, no need to add again
+
+    # Add new chat entry
+    new_entry = {"chat_id": chat_id}
+    if message_thread_id:
+        new_entry["message_thread_id"] = message_thread_id
+    data["channels"].append(new_entry)
+
+    # Save updated list
+    with open(channels_path, 'w') as file:
+        json.dump(data, file, indent=2)
+    print(f"Added new chat: {chat_id}, Thread: {message_thread_id}")
+
+
 # Callback function to handle button clicks
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     id_parts = query.data.split('_')
     action = id_parts[0]
+
+    # Handle approval/rejection logic separately
+    if action == "approve" or action == "reject":
+        chat_id = int(id_parts[1])
+        message_thread_id = int(id_parts[2]) if len(id_parts) > 2 and id_parts[2].isdigit() else None
+        if action == "approve":
+            # Add the chat ID to the subscribers list (implement this function)
+            add_chat_to_subscribers(chat_id, message_thread_id)
+            await query.edit_message_text("Subscription approved ✅")
+        else:
+            await query.edit_message_text("Subscription rejected ❌")
+        return  # Prevent further processing
+
     latitude = float(id_parts[1])
     longitude = float(id_parts[2])
     user_id = update.effective_user.id
@@ -254,7 +302,6 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         # Update every related message
         for msg in message_entry["messages"]:
-
             # Calculate the validity percentage
             total_votes = vote_counts[0] + vote_counts[1]
             percent_valid = round(100 * vote_counts[0] / total_votes, 2) if total_votes > 0 else 0
