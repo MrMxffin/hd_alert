@@ -1,6 +1,7 @@
 import os
 import json
 from dotenv import load_dotenv
+from babel.dates import format_date, format_datetime, format_time
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, \
     Chat, ChatMember, ChatMemberUpdated
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
@@ -239,7 +240,6 @@ async def new_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     await subscribe(update, context)
 
 
-
 def add_chat_to_subscribers(chat_id, message_thread_id=None):
     """Add a chat (group, supergroup, or channel) to the subscribers list."""
     channels_path = os.getenv("PATH_TO_CHANNELS")
@@ -279,7 +279,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     id_parts = query.data.split('_')
     action = id_parts[0]
 
-    if action == "approve" or action == "reject":
+    if action in ["approve", "reject"]:
         chat_id = int(id_parts[1])
         message_thread_id = int(id_parts[2]) if len(id_parts) > 2 and id_parts[2].isdigit() else None
         if action == "approve":
@@ -287,10 +287,65 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await query.edit_message_text("Subscription approved ✅")
         else:
             await query.edit_message_text("Subscription rejected ❌")
-        return  # Prevent further processing
+    elif action in ["valid", "invalid"]:
+        latitude = float(id_parts[1])
+        longitude = float(id_parts[2])
+        user_id = update.effective_user.id
+
+        # Find the message entry
+        message_entry = next((msg for msg in tracked_messages["messages"]
+                              if msg["latitude"] == latitude and msg["longitude"] == longitude), None)
+        if action == "valid":
+            if user_id not in message_entry["user_votes"]["valid"]:
+                message_entry["user_votes"]["valid"].append(user_id)
+                # Remove from invalid votes if present
+                if user_id in message_entry["user_votes"]["invalid"]:
+                    message_entry["user_votes"]["invalid"].remove(user_id)
+        elif action == "invalid":
+            if user_id not in message_entry["user_votes"]["invalid"]:
+                message_entry["user_votes"]["invalid"].append(user_id)
+                # Remove from valid votes if present
+                if user_id in message_entry["user_votes"]["valid"]:
+                    message_entry["user_votes"]["valid"].remove(user_id)
+
+            # Update all related messages with the new vote counts
+        vote_counts = (len(message_entry["user_votes"]["valid"]),
+                       len(message_entry["user_votes"]["invalid"]))
+
+        # Get the original message text shared by the user
+        address = message_entry["address"]
+        username = message_entry["username"]
+        original_text = f"Der Nutzer @{username} meldet eine Hausdurchsuchung an folgender Adresse:\n{address}"
+
+        # Update every related message
+        for msg in message_entry["messages"]:
+            # Calculate the validity percentage
+            total_votes = vote_counts[0] + vote_counts[1]
+            percent_valid = round(100 * vote_counts[0] / total_votes, 2) if total_votes > 0 else 0
+            time = format_datetime(datetime.now(), locale='de_DE')
+
+            await context.bot.edit_message_text(
+                chat_id=msg["chat_id"],
+                message_id=msg["message_id"],
+                text=f"{original_text}\n\n"
+                     f"Last Update: {time}\n"
+                     f"Total Votes: {total_votes}\n"
+                     f"Validity: {percent_valid}%",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"Valid ({vote_counts[0]})",
+                                          callback_data=f"valid_{latitude}_{longitude}"),
+                     InlineKeyboardButton(f"Invalid ({vote_counts[1]})",
+                                          callback_data=f"invalid_{latitude}_{longitude}")]
+                ])
+            )
+
+        # Save the updated tracked messages
+        save_tracked_messages()
+    else:
+        return
 
 
-async def track_channels (update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def track_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     if chat.type != Chat.CHANNEL:
         return
@@ -321,6 +376,7 @@ def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[tup
         ChatMember.ADMINISTRATOR,
     ]
     return was_admin, is_admin
+
 
 # Register handlers
 def run_bot():
