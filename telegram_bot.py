@@ -1,10 +1,13 @@
 import os
 import json
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, \
+    Chat, ChatMember, ChatMemberUpdated
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
+    CallbackQueryHandler, ChatMemberHandler
 import requests
 from datetime import datetime, timedelta
+from typing import Optional
 
 # Load environment variables from .env file
 load_dotenv()
@@ -68,22 +71,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Check if the message is from a private chat, group, or channel
     query = ""
-    if update.effective_message.message_thread_id:
+    if update.effective_message and update.effective_message.message_thread_id:
         message_thread_id = update.effective_message.message_thread_id
     else:
         message_thread_id = None
     user = update.effective_user
     chat = update.effective_chat
-    if update.effective_chat.type == "supergroup":
+    if chat.type == "supergroup":
         query = f"The User @{user.username} (ID: {user.id}) is requesting to subscribe the supergroup {chat.title} (ID: {chat.id}). Do you approve?"
-    elif update.effective_chat.type == "group":
+    elif chat.type == "group":
         query = f"The User @{user.username} (ID: {user.id}) is requesting to subscribe the group {chat.title} (ID: {chat.id}). Do you approve?"
-    elif update.effective_chat.type == "channel":
+    elif chat.type == "channel":
         query = f"The Channel {chat.title} (ID: {chat.id}) is requesting to subscribe). Do you approve?"
-    elif update.effective_chat.type == "private":
+    elif chat.type == "private":
         query = f"User @{user.username} (ID: {user.id}) is requesting to subscribe to the Bot in a private chat. Do you approve?"
 
-    if is_chat_subscribed(chat.id, message_thread_id):
+    if is_chat_subscribed(chat.id, message_thread_id) and not chat.type == "channel":
         await update.effective_message.reply_text("You are already subscribed.")
     else:
         await context.bot.send_message(
@@ -94,7 +97,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                  InlineKeyboardButton("No", callback_data=f"reject_{chat.id}_{message_thread_id}")]
             ])
         )
-        await update.effective_message.reply_text("Your subscription request has been sent to the bot owner.")
+        if not chat.type == "channel":
+            await update.effective_message.reply_text("Your subscription request has been sent to the bot owner.")
 
 
 # Define the function to handle the location message
@@ -218,6 +222,24 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.effective_message.reply_text("Vielen Dank für deine Hilfe.", reply_markup=ReplyKeyboardRemove())
 
 
+# Handle new chat members (when bot is added to a group or channel)
+async def new_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle when the bot is added to a channel/group."""
+    # Check if the bot is added to a chat and is given admin rights
+    new_members = update.message.new_chat_members
+    bot_user = context.bot.get_me()  # Get bot info
+    chat = update.effective_chat
+
+    # If the bot is added to the group/channel and has admin rights, subscribe it
+    for member in new_members:
+        if member.id == bot_user.id:
+            if chat.type in ["channel"]:
+                # Automatically subscribe the chat if bot is added with admin rights
+                if context.bot.get_chat_member(chat.id, bot_user.id).status == "administrator":
+                    await subscribe(update, context)
+
+
+
 def add_chat_to_subscribers(chat_id, message_thread_id=None):
     """Add a chat (group, supergroup, or channel) to the subscribers list."""
     channels_path = os.getenv("PATH_TO_CHANNELS")
@@ -251,80 +273,56 @@ def add_chat_to_subscribers(chat_id, message_thread_id=None):
     print(f"Added new chat: {chat_id}, Thread: {message_thread_id}")
 
 
-# Callback function to handle button clicks
+# Define callback function to handle button clicks
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     id_parts = query.data.split('_')
     action = id_parts[0]
 
-    # Handle approval/rejection logic separately
     if action == "approve" or action == "reject":
         chat_id = int(id_parts[1])
         message_thread_id = int(id_parts[2]) if len(id_parts) > 2 and id_parts[2].isdigit() else None
         if action == "approve":
-            # Add the chat ID to the subscribers list (implement this function)
             add_chat_to_subscribers(chat_id, message_thread_id)
             await query.edit_message_text("Subscription approved ✅")
         else:
             await query.edit_message_text("Subscription rejected ❌")
         return  # Prevent further processing
 
-    latitude = float(id_parts[1])
-    longitude = float(id_parts[2])
-    user_id = update.effective_user.id
 
-    # Find the message entry
-    message_entry = next((msg for msg in tracked_messages["messages"]
-                          if msg["latitude"] == latitude and msg["longitude"] == longitude), None)
+async def track_channels (update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    if chat.type != Chat.CHANNEL:
+        return
+    result = extract_status_change(update.my_chat_member)
+    if result is None:
+        return
+    was_admin, is_admin = result
 
-    if message_entry:
-        if action == "valid":
-            if user_id not in message_entry["user_votes"]["valid"]:
-                message_entry["user_votes"]["valid"].append(user_id)
-                # Remove from invalid votes if present
-                if user_id in message_entry["user_votes"]["invalid"]:
-                    message_entry["user_votes"]["invalid"].remove(user_id)
-        elif action == "invalid":
-            if user_id not in message_entry["user_votes"]["invalid"]:
-                message_entry["user_votes"]["invalid"].append(user_id)
-                # Remove from valid votes if present
-                if user_id in message_entry["user_votes"]["valid"]:
-                    message_entry["user_votes"]["valid"].remove(user_id)
-
-        # Update all related messages with the new vote counts
-        vote_counts = (len(message_entry["user_votes"]["valid"]),
-                       len(message_entry["user_votes"]["invalid"]))
-
-        # Get the original message text shared by the user
-        address = message_entry["address"]
-        username = message_entry["username"]
-        original_text = f"Der Nutzer @{username} meldet eine Hausdurchsuchung an folgender Adresse:\n{address}"
-
-        # Update every related message
-        for msg in message_entry["messages"]:
-            # Calculate the validity percentage
-            total_votes = vote_counts[0] + vote_counts[1]
-            percent_valid = round(100 * vote_counts[0] / total_votes, 2) if total_votes > 0 else 0
-
-            await context.bot.edit_message_text(
-                chat_id=msg["chat_id"],
-                message_id=msg["message_id"],
-                text=f"{original_text}\n\nValidity: {percent_valid}%",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"Valid ({vote_counts[0]})",
-                                          callback_data=f"valid_{latitude}_{longitude}"),
-                     InlineKeyboardButton(f"Invalid ({vote_counts[1]})",
-                                          callback_data=f"invalid_{latitude}_{longitude}")]
-                ])
-            )
-
-        # Save the updated tracked messages
-        save_tracked_messages()
-
-    # Acknowledge the callback
-    await query.answer()
+    if not was_admin and is_admin:
+        await subscribe(update, context)
+    elif was_admin and not is_admin:
+        print("unsubscribe")
 
 
+def extract_status_change(chat_member_update: ChatMemberUpdated) -> Optional[tuple[bool, bool]]:
+    status_change = chat_member_update.difference().get("status")
+
+    if status_change is None:
+        return None
+
+    old_status, new_status = status_change
+    was_admin = old_status in [
+        ChatMember.OWNER,
+        ChatMember.ADMINISTRATOR,
+    ]
+    is_admin = new_status in [
+        ChatMember.OWNER,
+        ChatMember.ADMINISTRATOR,
+    ]
+    return was_admin, is_admin
+
+# Register handlers
 def run_bot():
     try:
         # Initialize the application
@@ -333,6 +331,7 @@ def run_bot():
         # Register the handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("subscribe", subscribe))
+        app.add_handler(ChatMemberHandler(track_channels, ChatMemberHandler.MY_CHAT_MEMBER))
         app.add_handler(MessageHandler(filters.LOCATION, handle_location))
         app.add_handler(CallbackQueryHandler(button_click))
 
